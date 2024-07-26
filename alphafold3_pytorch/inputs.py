@@ -13,6 +13,8 @@ from typing import Any, Callable, List, Set, Tuple, Type
 import einx
 
 import numpy as np
+from numpy.lib.format import open_memmap
+
 import torch
 from torch import tensor
 from torch.utils.data import Dataset
@@ -102,9 +104,6 @@ elif os.path.exists(CCD_COMPONENTS_FILEPATH):
 def flatten(arr):
     return [el for sub_arr in arr for el in sub_arr]
 
-def exclusive_cumsum(t):
-    return t.cumsum(dim = -1) - t
-
 def pad_to_len(t, length, value = 0, dim = -1):
     assert dim < 0
     zeros = (0, 0) * (-dim - 1)
@@ -182,6 +181,57 @@ class BatchedAtomInput:
 
     def dict(self):
         return asdict(self)
+
+# functions for saving an AtomInput to disk or loading from disk to AtomInput
+
+@typecheck
+def atom_input_to_file(
+    atom_input: AtomInput,
+    path: str,
+    overwrite: bool = False
+) -> Path:
+
+    path = Path(path)
+
+    if not overwrite:
+        assert not path.exists()
+
+    path.parents[0].mkdir(exist_ok = True, parents = True)
+
+    torch.save(atom_input.dict(), str(path))
+    return path
+
+@typecheck
+def file_to_atom_input(path: str | Path) -> AtomInput:
+    if isinstance(path, str):
+        path = Path(path)
+
+    assert path.is_file()
+
+    atom_input_dict = torch.load(str(path))
+    return AtomInput(**atom_input_dict)
+
+# Atom dataset that returns a AtomInput based on folders of atom inputs stored on disk
+
+class AtomDataset(Dataset):
+    def __init__(
+        self,
+        folder: str | Path
+    ):
+        if isinstance(folder, str):
+            folder = Path(folder)
+
+        assert folder.exists() and folder.is_dir()
+
+        self.folder = folder
+        self.files = [*folder.glob('**/*.pt')]
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx: int) -> AtomInput:
+        file = self.files[idx]
+        return file_to_atom_input(file)
 
 # molecule input - accepting list of molecules as rdchem.Mol + the atomic lengths for how to pool into tokens
 
@@ -999,7 +1049,6 @@ def alphafold3_input_to_molecule_input(alphafold3_input: Alphafold3Input) -> Mol
     return molecule_input
 
 # pdb input
-
 
 @typecheck
 @dataclass
